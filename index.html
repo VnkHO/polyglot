@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Polyglot">
+<meta name="theme-color" content="#fbf7f2">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>Polyglot</title>
+<style>
+body{margin:0;background:#fbf7f2;color:#1f1b16;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+#lock{max-width:420px;margin:0 auto;padding:calc(60px + env(safe-area-inset-top)) 22px 30px}
+#lock h1{font-size:28px;margin:0 0 18px}
+#lock label{display:block;color:#7a7064;margin-bottom:6px}
+#lock input{width:100%;box-sizing:border-box;font:inherit;font-size:19px;padding:14px;border:2px solid #ece4da;border-radius:14px;background:#fff}
+#lock button{width:100%;margin-top:14px;border:0;border-radius:16px;background:#c8372d;color:#fff;font:inherit;font-size:19px;font-weight:700;padding:16px;cursor:pointer}
+#lock button:disabled{opacity:.6}
+#lockerr{color:#b42318;min-height:24px;margin-top:12px}
+</style>
+</head>
+<body>
+<form id="lock" class="hidden" autocomplete="off">
+  <h1>Polyglot</h1>
+  <label for="code">Code secret</label>
+  <input id="code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required>
+  <button id="unlock" type="submit">Déverrouiller</button>
+  <div id="lockerr" role="alert"></div>
+</form>
+<script>
+// Chargeur public : tout le reste du site est chiffré (AES-GCM, clé dérivée du code par PBKDF2-SHA256).
+(() => {
+  const S = crypto.subtle, te = new TextEncoder(), td = new TextDecoder();
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  const norm = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  const $ = id => document.getElementById(id);
+  let H = null, KEY = null, MAP = null;
+  const idb = (mode, fn) => new Promise((ok, ko) => {
+    const r = indexedDB.open("polyglot-vault", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("k");
+    r.onerror = () => ko(r.error);
+    r.onsuccess = () => { const t = r.result.transaction("k", mode), q = fn(t.objectStore("k")); t.oncomplete = () => ok(q.result); t.onerror = () => ko(t.error); };
+  });
+  async function derive(pass, extractable) {
+    const base = await S.importKey("raw", te.encode(norm(pass)), "PBKDF2", false, ["deriveKey"]);
+    return S.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: b64(H.salt), iterations: H.iterations }, base, { name: "AES-GCM", length: 256 }, extractable, ["decrypt"]);
+  }
+  async function saveKey(pass) {
+    try { await idb("readwrite", s => s.put(KEY, "key")); localStorage.removeItem("polyglot-k"); return; } catch (e) {}
+    // Repli (si ce navigateur ne sait pas garder une clé dans IndexedDB) : clé brute dans localStorage
+    const raw = new Uint8Array(await S.exportKey("raw", await derive(pass, true)));
+    localStorage.setItem("polyglot-k", btoa(String.fromCharCode(...raw)));
+  }
+  async function cachedKey() {
+    try { const k = await idb("readonly", s => s.get("key")); if (k) return k; } catch (e) {}
+    const raw = localStorage.getItem("polyglot-k");
+    return raw ? S.importKey("raw", b64(raw), "AES-GCM", false, ["decrypt"]) : null;
+  }
+  async function forget() { try { await idb("readwrite", s => s.delete("key")); } catch (e) {} localStorage.removeItem("polyglot-k"); }
+  const dec = async (key, buf) => S.decrypt({ name: "AES-GCM", iv: buf.slice(0, 12) }, key, buf.slice(12));
+  const fetchBin = async id => { const r = await fetch(`e/${id}.bin`, { cache: "no-cache" }); if (!r.ok) throw new Error("fichier " + r.status); return r.arrayBuffer(); };
+  async function openManifest(key) { return JSON.parse(td.decode(await dec(key, await fetchBin(H.manifest)))); }
+
+  const blobs = {}, mods = {};
+  function getBlob(path) {
+    const f = MAP[path]; if (!f) return Promise.reject(new Error("introuvable : " + path));
+    return blobs[path] ||= fetchBin(f.id).then(b => dec(KEY, b)).then(pt => new Blob([pt], { type: f.type }));
+  }
+  const resolve = (from, rel) => new URL(rel, "https://v/" + from).pathname.slice(1);
+  function importModule(path) { return loadModule(path).then(u => import(u)); }
+  function loadModule(path) {
+    return mods[path] ||= (async () => {
+      let src = await (await getBlob(path)).text();
+      const re = /((?:import|export)\s[^'";]*?from\s*|import\s*\(\s*|import\s*)(["'])(\.{1,2}\/[^"']+)\2/g, deps = new Set();
+      for (const m of src.matchAll(re)) deps.add(m[3]);
+      const urls = {}; for (const d of deps) urls[d] = await loadModule(resolve(path, d));
+      src = src.replace(re, (all, pre, q, d) => pre + q + urls[d] + q);
+      return URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    })();
+  }
+  async function boot() {
+    globalThis.POLYGLOT_VAULT = { getBlob, importModule, forget };
+    const css = document.createElement("style"); css.textContent = await (await getBlob("style.css")).text();
+    const html = await (await getBlob("app.html")).text();
+    document.head.appendChild(css);
+    $("lock").remove(); document.body.insertAdjacentHTML("afterbegin", html);
+    await importModule("js/main.js");
+  }
+  function showLock(msg) { $("lock").classList.remove("hidden"); $("lock").style.display = ""; $("lockerr").textContent = msg || ""; $("code").focus(); }
+  $("lock").style.display = "none";
+  $("lock").onsubmit = async e => {
+    e.preventDefault();
+    const pass = $("code").value; if (!norm(pass)) return;
+    $("unlock").disabled = true; $("lockerr").textContent = "Vérification…";
+    try {
+      const k = await derive(pass, false);
+      try { MAP = await openManifest(k); } catch (x) { throw new Error("bad"); }
+      KEY = k; await saveKey(pass); await boot();
+    } catch (x) {
+      $("unlock").disabled = false;
+      showLock(x.message === "bad" ? "Code incorrect. Vérifie et réessaie." : "Impossible de charger le site. Vérifie ta connexion.");
+    }
+  };
+  (async () => {
+    try { H = await (await fetch("vault.json", { cache: "no-cache" })).json(); } catch (e) { return showLock("Impossible de joindre le site. Vérifie ta connexion."); }
+    const k = await cachedKey().catch(() => null);
+    if (k) { try { MAP = await openManifest(k); KEY = k; return await boot(); } catch (e) { await forget(); } }
+    showLock();
+  })();
+})();
+</script>
+</body>
+</html>
