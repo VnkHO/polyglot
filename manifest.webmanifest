@@ -1,13 +1,13 @@
 {
-  "name": "Polyglot",
-  "short_name": "Polyglot",
-  "description": "Écoute, répète, vois ta prononciation.",
+  "name": "Écho",
+  "short_name": "Écho",
+  "description": "Ta voix, dans une autre langue.",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#fbf7f2",
-  "theme_color": "#fbf7f2",
+  "background_color": "#FFFDFC",
+  "theme_color": "#FFFDFC",
   "icons": [
     {
       "src": "icons/icon-192.png",
