@@ -85,11 +85,20 @@ body{margin:0;background:#fbf7f2;color:#1f1b16;font:16px/1.45 -apple-system,Blin
   }
   async function boot() {
     globalThis.POLYGLOT_VAULT = { getBlob, importModule, forget };
+    if (new URLSearchParams(location.search).has("echo")) return bootEcho();
     const css = document.createElement("style"); css.textContent = await (await getBlob("style.css")).text();
     const html = await (await getBlob("app.html")).text();
     document.head.appendChild(css);
     $("lock").remove(); document.body.insertAdjacentHTML("afterbegin", html);
     await importModule("js/main.js");
+  }
+  // Écho (étape 0) : une app Vite à part, servie depuis le même coffre (echo/echo.css, echo/echo.js, echo/worklet.js).
+  async function bootEcho() {
+    const css = document.createElement("style"); css.textContent = await (await getBlob("echo/echo.css")).text();
+    document.head.appendChild(css);
+    document.title = "Écho · étape 0";
+    $("lock").remove(); document.body.insertAdjacentHTML("afterbegin", '<div id="echo"></div>');
+    await importModule("echo/echo.js");
   }
   function showLock(msg) { $("lock").classList.remove("hidden"); $("lock").style.display = ""; $("lockerr").textContent = msg || ""; $("code").focus(); }
   $("lock").style.display = "none";
