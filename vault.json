@@ -2,7 +2,7 @@
  "v": 1,
  "kdf": "PBKDF2-SHA256",
  "iterations": 600000,
- "salt": "HvcinjZ69iyz54wSCfBFvw==",
+ "salt": "Um881OdL7Upc+TW+vEZShQ==",
  "cipher": "AES-256-GCM",
- "manifest": "0803c44f83ebbae735a3e1eb"
+ "manifest": "ea5cfe10288ef3b2178ef46b"
 }
